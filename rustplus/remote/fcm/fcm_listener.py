@@ -1,5 +1,5 @@
 from push_receiver import PushReceiver
-from threading import Thread
+from threading import Thread, Event
 
 
 class FCMListener:
@@ -11,11 +11,11 @@ class FCMListener:
     def on_notification(self, obj, notification, data_message) -> None:
         pass
 
-    def start(self, daemon=False) -> None:
-        self.thread = Thread(target=self.__fcm_listen, daemon=daemon).start()
+    def start(self, daemon=False, close_event: Event=None) -> None:
+        self.thread = Thread(target=self.__fcm_listen, args=(close_event,), daemon=daemon).start()
 
-    def __fcm_listen(self) -> None:
+    def __fcm_listen(self, close_event=None) -> None:
         if self.data is None:
             raise ValueError("Data is None")
 
-        self._push_listener.listen(callback=self.on_notification)
+        self._push_listener.listen(callback=self.on_notification, close_event=close_event)
