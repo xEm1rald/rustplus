@@ -31,6 +31,8 @@ from .structs import (
     RustEntityInfo,
     RustContents,
     RustItem,
+    RustClanInfo,
+    RustClanMessage,
 )
 from .structs.rust_error import RustError
 from .utils import (
@@ -61,13 +63,16 @@ class RustSocket:
         self.command_options = command_options
         self.logger = logging.getLogger("rustplus.py")
 
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.DEBUG)
-        console_handler.setFormatter(
-            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        )
-        self.logger.addHandler(console_handler)
-        self.logger.setLevel(logging.DEBUG)
+        if not self.logger.handlers:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.DEBUG)
+            console_handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+                )
+            )
+            self.logger.addHandler(console_handler)
+            self.logger.setLevel(logging.DEBUG)
 
         self.ws = RustWebsocket(
             self.server_details,
@@ -85,10 +90,10 @@ class RustSocket:
 
         self.ratelimiter.add_socket(
             self.server_details,
-            RateLimiter.SERVER_LIMIT,
-            RateLimiter.SERVER_LIMIT,
+            RateLimiter.SOCKET_LIMIT,
+            RateLimiter.SOCKET_LIMIT,
             1,
-            RateLimiter.SERVER_REFRESH_AMOUNT,
+            RateLimiter.SOCKET_REFRESH_AMOUNT,
         )
 
     async def _handle_ratelimit(self, tokens) -> None:
@@ -314,6 +319,11 @@ class RustSocket:
                 for monument in monuments:
                     if str(monument.token) == "DungeonBase":
                         continue
+                    if "underwater-lab-base" in str(monument.token):
+                        # An underwater lab's interior modules (moonpools, etc.) are
+                        # reported as separate markers next to the lab; they aren't
+                        # standalone monuments, so don't draw them.
+                        continue
                     icon = convert_monument(monument.token, override_images)
                     if monument.token in override_images:
                         icon = icon.resize((150, 150))
@@ -332,7 +342,7 @@ class RustSocket:
 
             for marker in map_markers:
                 if add_events:
-                    if marker.type in [2, 4, 5, 6, 8]:
+                    if marker.type in RustMarker.Events:
                         icon = convert_marker(int(marker.type), marker.rotation)
                         if marker.type == 6:
                             x, y = marker.x, marker.y
@@ -558,3 +568,69 @@ class RustSocket:
             return RustError("get_camera_manager", response.response.error.error)
 
         return CameraManager(self, cam_id, response.response.camera_subscribe_info)
+
+    async def get_clan_info(self) -> Union[RustClanInfo, RustError]:
+        """
+        Gets the clan information for the player's current clan.
+
+        :return RustClanInfo: The clan information
+        """
+        packet = await self._generate_request(tokens=1)
+        packet.get_clan_info = AppEmpty()
+        response = await self.ws.send_and_get(packet)
+
+        if response is None:
+            return RustError("get_clan_info", "No response received")
+
+        if error_present(response):
+            return RustError("get_clan_info", response.response.error.error)
+
+        return RustClanInfo(response.response.clan_info.clan_info)
+
+    async def get_clan_chat(self) -> Union[List[RustClanMessage], RustError]:
+        """
+        Gets the clan chat for the player's current clan.
+
+        :return List[RustClanMessage]: The clan chat
+        """
+        packet = await self._generate_request(tokens=1)
+        packet.get_clan_chat = AppEmpty()
+        response = await self.ws.send_and_get(packet)
+
+        if response is None:
+            return RustError("get_clan_chat", "No response received")
+
+        if error_present(response):
+            return RustError("get_clan_chat", response.response.error.error)
+
+        return [
+            RustClanMessage(message) for message in response.response.clan_chat.messages
+        ]
+
+    async def send_clan_message(self, message: str) -> None:
+        """
+        Sends a message to the in-game clan chat
+
+        :param message: The string message to send
+        """
+
+        packet = await self._generate_request(tokens=2)
+        send_message = AppSendMessage()
+        send_message.message = message
+        packet.send_clan_message = send_message
+
+        await self.ws.send_message(packet, True)
+
+    async def set_clan_motd(self, message: str) -> None:
+        """
+        Sets the clan's message of the day
+
+        :param message: The string message to set as the clan's message of the day
+        """
+
+        packet = await self._generate_request()
+        send_message = AppSendMessage()
+        send_message.message = message
+        packet.set_clan_motd = send_message
+
+        await self.ws.send_message(packet, True)
