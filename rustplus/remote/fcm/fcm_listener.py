@@ -1,21 +1,47 @@
-from push_receiver import PushReceiver
-from threading import Thread, Event
+from typing import Any, Mapping
+
+from push_receiver import AsyncPushReceiver
 
 
 class FCMListener:
-    def __init__(self, data: dict = None) -> None:
-        self.thread = None
+    """An async Rust+ FCM notification listener.
+
+    Subclasses may implement ``on_notification`` as either a regular function
+    or an ``async def`` coroutine.  ``start`` runs until ``stop`` is called.
+    """
+
+    def __init__(self, data: Mapping[str, Any]) -> None:
+        if data is None:
+            raise ValueError("data must not be None")
+        if "fcm_credentials" not in data:
+            raise ValueError("data must contain fcm_credentials")
+
         self.data = data
-        self._push_listener = PushReceiver(credentials=self.data["fcm_credentials"])
+        self._push_listener = AsyncPushReceiver(
+            credentials=self.data["fcm_credentials"]
+        )
 
     def on_notification(self, obj, notification, data_message) -> None:
-        pass
+        """Handle a received FCM notification.
 
-    def start(self, daemon=False, close_event: Event=None) -> None:
-        self.thread = Thread(target=self.__fcm_listen, args=(close_event,), daemon=daemon).start()
+        Override this method in a subclass.  The async receiver also accepts
+        coroutine overrides of this method.
+        """
 
-    def __fcm_listen(self, close_event=None) -> None:
-        if self.data is None:
-            raise ValueError("Data is None")
+    async def __aenter__(self) -> "FCMListener":
+        return self
 
-        self._push_listener.listen(callback=self.on_notification, close_event=close_event)
+    async def __aexit__(self, exc_type, exc, traceback) -> None:
+        await self.stop()
+
+    @property
+    def is_running(self) -> bool:
+        return self._push_listener.is_running
+
+    async def start(self) -> None:
+        """Listen for FCM messages until :meth:`stop` is awaited."""
+        await self._push_listener.listen(callback=self.on_notification)
+
+    async def stop(self) -> None:
+        """Stop listening without waiting for the socket read timeout."""
+        await self._push_listener.stop()
