@@ -1,7 +1,7 @@
 websockets
 Pillow
 asyncio
-rustPlusPushReceiver==0.6.1
+rustPlusPushReceiver @ git+https://github.com/xEm1rald/aio_push_receiver.git@ac81e74c620056b39a46c2f422f833891e60d860
 http-ece
 requests
 numpy
